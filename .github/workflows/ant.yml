@@ -1,104 +1,132 @@
-name: Tests
-
-on:
-  push:
-  pull_request:
-
 jobs:
   build:
-    runs-on: ubuntu-latest
-
+    runs-on: self-hosted
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      
-      - name: Set up JDK 11
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'zulu'
-          java-version: 11
-      
-      - name: Cache dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ivyCache
-            lib
-          key: ivy-${{ hashFiles('**/ivy.xml') }}
-          restore-keys: |
-            ivy-
-        
-      - name: Build with Ant
-        run: ant -noinput dist
-        
-      - uses: actions/upload-artifact@v4
-        with:
-          name: lombok.jar
-          path: dist/lombok.jar
-    
-  
-  test-javac:
-    runs-on: ubuntu-latest
-    needs: build
+    - continue-on-error: true
+      name: Checkout
+      uses: actions/checkout@v4
+    - continue-on-error: true
+      name: Set up JDK 11
+      uses: actions/setup-java@v4
+      with:
+        distribution: zulu
+        java-version: 11
+    - continue-on-error: true
+      name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        key: ivy-${{ hashFiles('**/ivy.xml') }}
+        path: 'ivyCache
+
+          lib
+
+          '
+        restore-keys: 'ivy-
+
+          '
+    - continue-on-error: true
+      name: Build with Ant
+      run: ant -noinput dist
+    - continue-on-error: true
+      uses: actions/upload-artifact@v4
+      with:
+        name: lombok.jar
+        path: dist/lombok.jar
+  docker-integration-test:
     env:
-      EA_JDK: 22
-    strategy: 
-      matrix: 
-        jdk: [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
-        goal: [javacCurrent]
-        include:
-          - jdk: 11
-            goal: javac6
-          - jdk: 11
-            goal: javac8
-      fail-fast: false
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      
-      - name: Set up JDK ${{ matrix.jdk }}
-        if: ${{ matrix.jdk < env.EA_JDK }}
-        uses: actions/setup-java@v4
-        with:
-          java-version: ${{ matrix.jdk }}
-          distribution: 'zulu'
-      
-      - name: Set up JDK ${{ matrix.jdk }} Early Access release
-        if: ${{ matrix.jdk >= env.EA_JDK }}
-        uses: oracle-actions/setup-java@v1
-        with:
-          website: jdk.java.net
-          release: ${{ matrix.jdk }}
-          version: latest
-          
-      - name: Install Ant
-        env:
-          ANT_VERSION: 1.10.14
-        run: |
-          wget https://archive.apache.org/dist/ant/binaries/apache-ant-$ANT_VERSION-bin.zip
-          unzip apache-ant-$ANT_VERSION-bin.zip -d "${HOME}"
-          echo "ANT_HOME=${HOME}/apache-ant-$ANT_VERSION" >> $GITHUB_ENV
-          echo "${HOME}/apache-ant-$ANT_VERSION/bin" >> $GITHUB_PATH
-      
-      - name: Cache dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ivyCache
-            lib
-          key: ivy-${{ hashFiles('**/ivy.xml') }}
-          restore-keys: |
-            ivy-
-        
-      - name: Run tests
-        run: ant -noinput test.${{ matrix.goal }}
-  
-  test-eclipse:
-    runs-on: ubuntu-latest
+      IMAGE_NAME: lombok-${{ matrix.tool.name }}-jdk${{ matrix.jdk }}
     needs: build
-    strategy: 
-      matrix: 
+    runs-on: self-hosted
+    steps:
+    - continue-on-error: true
+      name: Checkout
+      uses: actions/checkout@v4
+    - continue-on-error: true
+      uses: actions/download-artifact@v4
+      with:
+        name: lombok.jar
+    - continue-on-error: true
+      name: Build container
+      run: docker build --build-arg jdk=${{ matrix.jdk }} -t $IMAGE_NAME -f ${{ matrix.tool.name
+        }}/Dockerfile .
+      working-directory: ./docker
+    - continue-on-error: true
+      name: Compile in container
+      run: docker run --entrypoint="" -v $(pwd)/lombok.jar:/workspace/lombok.jar $IMAGE_NAME
+        /bin/bash -c "cd classpath; ${{ matrix.tool.cmd }}"
+    strategy:
+      fail-fast: false
+      matrix:
+        exclude:
+        - jdk: 22
+          tool:
+            cmd: gradle assemble
+            name: gradle
+        jdk:
+        - 8
+        - 11
+        - 17
+        - 21
+        - 22
+        tool:
+        - cmd: mvn compile
+          name: maven
+        - cmd: gradle assemble
+          name: gradle
+        - cmd: ant dist
+          name: ant
+        - cmd: bazel build //:ProjectRunner
+          name: bazel
+  test-eclipse:
+    needs: build
+    runs-on: self-hosted
+    steps:
+    - continue-on-error: true
+      name: Checkout
+      uses: actions/checkout@v4
+    - continue-on-error: true
+      name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        distribution: zulu
+        java-version: 17
+    - continue-on-error: true
+      name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        key: ivy-${{ hashFiles('**/ivy.xml') }}
+        path: 'ivyCache
+
+          lib
+
+          '
+        restore-keys: 'ivy-
+
+          '
+    - continue-on-error: true
+      if: ${{ !endsWith(matrix.version, 'full') }}
+      name: Cache base testenv
+      uses: actions/cache@v4
+      with:
+        key: base-testenv-${{ hashFiles('**/setup.ant.xml') }}
+        path: 'testenv
+
+          '
+    - continue-on-error: true
+      if: ${{ endsWith(matrix.version, 'full') }}
+      name: Cache full testenv
+      uses: actions/cache@v4
+      with:
+        key: ${{ matrix.version }}-testenv-${{ hashFiles('**/setup.ant.xml') }}
+        path: 'testenv
+
+          '
+    - continue-on-error: true
+      name: Build with Ant
+      run: xvfb-run ant -noinput dist test.${{ matrix.version }}
+    strategy:
+      fail-fast: false
+      matrix:
         version:
         - eclipse-oxygen
         - eclipse-202006
@@ -118,75 +146,83 @@ jobs:
         - ecj14
         - ecj16
         - ecj19
-      fail-fast: false
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: 17
-          distribution: 'zulu'
-
-      - name: Cache dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ivyCache
-            lib
-          key: ivy-${{ hashFiles('**/ivy.xml') }}
-          restore-keys: |
-            ivy-
-
-      - name: Cache base testenv
-        if: ${{ !endsWith(matrix.version, 'full') }}
-        uses: actions/cache@v4
-        with:
-          path: |
-            testenv
-          key: base-testenv-${{ hashFiles('**/setup.ant.xml') }}
-
-      - name: Cache full testenv
-        if: ${{ endsWith(matrix.version, 'full') }}
-        uses: actions/cache@v4
-        with:
-          path: |
-            testenv
-          key: ${{ matrix.version }}-testenv-${{ hashFiles('**/setup.ant.xml') }}
-          
-      - name: Build with Ant
-        run: xvfb-run ant -noinput dist test.${{ matrix.version }}
-        
-  docker-integration-test:
-    runs-on: ubuntu-latest
-    needs: build
-    strategy: 
-      matrix: 
-        jdk: [8, 11, 17, 21, 22]
-        tool: 
-          - {name: "maven",  cmd: "mvn compile"}
-          - {name: "gradle", cmd: "gradle assemble"}
-          - {name: "ant",    cmd: "ant dist"}
-          - {name: "bazel",  cmd: "bazel build //:ProjectRunner"}
-        exclude:
-          - {tool: {name: "gradle", cmd: "gradle assemble"}, jdk: 22}
-      fail-fast: false
+  test-javac:
     env:
-      IMAGE_NAME: lombok-${{ matrix.tool.name }}-jdk${{ matrix.jdk }}
-      
+      EA_JDK: 22
+    needs: build
+    runs-on: self-hosted
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        
-      - uses: actions/download-artifact@v4
-        with:
-          name: lombok.jar
-        
-      - name: Build container
-        working-directory: ./docker
-        run: docker build --build-arg jdk=${{ matrix.jdk }} -t $IMAGE_NAME -f ${{ matrix.tool.name }}/Dockerfile .
-        
-      - name: Compile in container
-        run: docker run --entrypoint="" -v $(pwd)/lombok.jar:/workspace/lombok.jar $IMAGE_NAME /bin/bash -c "cd classpath; ${{ matrix.tool.cmd }}"
+    - continue-on-error: true
+      name: Checkout
+      uses: actions/checkout@v4
+    - continue-on-error: true
+      if: ${{ matrix.jdk < env.EA_JDK }}
+      name: Set up JDK ${{ matrix.jdk }}
+      uses: actions/setup-java@v4
+      with:
+        distribution: zulu
+        java-version: ${{ matrix.jdk }}
+    - continue-on-error: true
+      if: ${{ matrix.jdk >= env.EA_JDK }}
+      name: Set up JDK ${{ matrix.jdk }} Early Access release
+      uses: oracle-actions/setup-java@v1
+      with:
+        release: ${{ matrix.jdk }}
+        version: latest
+        website: jdk.java.net
+    - continue-on-error: true
+      env:
+        ANT_VERSION: 1.10.14
+      name: Install Ant
+      run: 'wget https://archive.apache.org/dist/ant/binaries/apache-ant-$ANT_VERSION-bin.zip
+
+        unzip apache-ant-$ANT_VERSION-bin.zip -d "${HOME}"
+
+        echo "ANT_HOME=${HOME}/apache-ant-$ANT_VERSION" >> $GITHUB_ENV
+
+        echo "${HOME}/apache-ant-$ANT_VERSION/bin" >> $GITHUB_PATH
+
+        '
+    - continue-on-error: true
+      name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        key: ivy-${{ hashFiles('**/ivy.xml') }}
+        path: 'ivyCache
+
+          lib
+
+          '
+        restore-keys: 'ivy-
+
+          '
+    - continue-on-error: true
+      name: Run tests
+      run: ant -noinput test.${{ matrix.goal }}
+    strategy:
+      fail-fast: false
+      matrix:
+        goal:
+        - javacCurrent
+        include:
+        - goal: javac6
+          jdk: 11
+        - goal: javac8
+          jdk: 11
+        jdk:
+        - 11
+        - 12
+        - 13
+        - 14
+        - 15
+        - 16
+        - 17
+        - 18
+        - 19
+        - 20
+        - 21
+        - 22
+name: Tests
+on:
+  repository_dispatch:
+    types: trigger-ga___ant.yml
